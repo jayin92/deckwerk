@@ -82,6 +82,14 @@ const CASES = [
     operationsPerCase: 5,
     seed,
   })),
+  // Cmd+Shift+V, the same payloads with their formatting left behind.
+  ...pasteCases({
+    exhaustive: RUN_EXHAUSTIVE,
+    sample: 8,
+    operationsPerCase: RUN_EXHAUSTIVE ? 8 : 4,
+    seed: 20261125,
+    route: 'plain',
+  }),
 ];
 
 let workDir = '';
@@ -325,7 +333,9 @@ async function runPasteCase(cdp: Cdp, port: number, testCase: PasteCase): Promis
   await placeCaret(cdp, target);
 
   const beforePaste = await contentText(cdp, PASTE_CONTENT);
-  await pasteFromClipboard(cdp, payload);
+  await pasteFromClipboard(cdp, payload, testCase.route);
+  // Only a plain paste leaves typed markers at the start of paragraphs.
+  const markers = testCase.route === 'plain' ? withoutLineMarkers : (text: string) => text;
   if (payload.expected.length > 0) {
     await eventually(async () => contentText(cdp, PASTE_CONTENT),
       `${where}: pasted text never appeared`,
@@ -368,17 +378,22 @@ async function runPasteCase(cdp: Cdp, port: number, testCase: PasteCase): Promis
     if (operation.kind === 'inline' || operation.kind === 'align' || operation.kind === 'list') {
       // Formatting rearranges markup; it must never rewrite the words. A list
       // conversion collapses the blank lines a bullet list cannot hold, so
-      // compare the words rather than the exact spacing.
-      expect(words(after), `${label}: formatting changed the text`).toEqual(words(before));
+      // compare the words rather than the exact spacing. After a plain paste,
+      // typed markers ("* ", "1. ") are what a list conversion turns into
+      // real bullets.
+      expect(words(markers(after)), `${label}: formatting changed the text`)
+        .toEqual(words(markers(before)));
     }
     if (operation.kind === 'type' || operation.kind === 'split') {
       // Whitespace depends on where the caret sat and whether Enter opened a
       // new block, so compare with spacing removed. This still catches a
       // keystroke landing twice ("42" arriving as "4422") and text going
       // missing, which is what these operations can actually get wrong.
+      // Return at the end of a "- item" line makes it a list item, as it
+      // does when the marker was typed, so markers are left out of the count.
       const typed = compact(operation.text);
-      expect(compact(after).length, `${label}: characters inserted`)
-        .toBe(compact(before).length + typed.length);
+      expect(compact(markers(after)).length, `${label}: characters inserted`)
+        .toBe(compact(markers(before)).length + typed.length);
       expect(occurrences(compact(after), typed), `${label}: copies of the typed run`)
         .toBe(occurrences(compact(before), typed) + 1);
     }
@@ -655,6 +670,17 @@ async function checkBox(cdp: Cdp, port: number, label: string): Promise<void> {
   if (stored.length > 0) {
     expect(stored, `${label}: persisted markup — ${persisted}`).toEqual([]);
   }
+}
+
+/**
+ * The text without its typed list markers ("*", "-", "1."), which the editor
+ * converts into a real list (paragraphsToList, typedListMarkerAtCaret). Only
+ * plain text pasted with Cmd+Shift+V puts them at the start of paragraphs;
+ * Chromium's own paste leaves its lines in one paragraph, where they stay.
+ * The text is already whitespace-normalised, so markers are dropped as words.
+ */
+function withoutLineMarkers(value: string): string {
+  return value.split(' ').filter((word) => !/^(?:[*-]|\d+[.)])$/.test(word)).join(' ');
 }
 
 function compact(value: string): string {

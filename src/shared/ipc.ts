@@ -43,6 +43,7 @@ export const IPC = {
   assetImportProgress: 'asset:importProgress',
   clipboardWrite: 'clipboard:write',
   clipboardRead: 'clipboard:read',
+  clipboardReadText: 'clipboard:read-text',
   assetProbe: 'asset:probe',
   assetSaveOriginal: 'asset:saveOriginal',
   presentOpen: 'present:open',

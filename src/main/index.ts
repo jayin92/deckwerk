@@ -1131,6 +1131,9 @@ function registerHandlers(): void {
     clipboard.writeBuffer(CLIPBOARD_FORMAT, Buffer.from(JSON.stringify(payload), 'utf8'));
   });
 
+  // Paste without formatting (Cmd/Ctrl+Shift+V in a text box): the text only.
+  ipcMain.handle(IPC.clipboardReadText, () => clipboard.readText());
+
   // Paste: validate whatever is on the pasteboard, then re-import each
   // referenced asset into *this* deck. Import names files by content hash, so
   // pasting back into the source deck (or pasting twice) copies nothing.
