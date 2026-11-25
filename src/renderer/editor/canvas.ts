@@ -5139,6 +5139,7 @@ export class EditorCanvas {
      * Returns false when the text cannot be read (a browser on a plain-HTTP
      * page has no clipboard API): the key is then left to the browser.
      */
+    let plainPasting = false;
     const pastePlainTextChord = (): boolean => {
       const nativeApi = window.api as Partial<Window['api']>;
       const read = nativeApi.readClipboardText
@@ -5154,8 +5155,17 @@ export class EditorCanvas {
       });
       return true;
     };
-    const insertPlainText = (plainText: string) => {
-      if (ended || !plainText) return;
+    const insertPlainText = (clipboardText: string) => {
+      // A Windows clipboard ends its lines with CRLF; insertText would keep
+      // each \r as a character.
+      const plainText = clipboardText.replace(/\r\n?/g, '\n');
+      if (!plainText) return;
+      if (ended) {
+        // The read is asynchronous, and a rebuild (a collaborator's edit)
+        // can end this session meanwhile.
+        this.notice('The text box was redrawn before the paste arrived: paste again.');
+        return;
+      }
       if (document.activeElement !== body) body.focus();
       const selection = window.getSelection();
       const inBox = selection?.rangeCount
@@ -5172,7 +5182,13 @@ export class EditorCanvas {
       if (event.defaultPrevented) return;
       // Its own undo step, as a native paste is.
       sealTextChunk();
-      document.execCommand('insertText', false, plainText);
+      // Synchronous: its input event is handled as a paste, not as typing.
+      plainPasting = true;
+      try {
+        document.execCommand('insertText', false, plainText);
+      } finally {
+        plainPasting = false;
+      }
       repairPastedMarkup();
       this.textSelectionRange = this.activeTextRange(body)?.cloneRange() ?? null;
       sealTextChunk();
@@ -5475,7 +5491,11 @@ export class EditorCanvas {
         breakFormats = null;
         this.carryTypingFormatsOntoLine(body, formats);
       }
-      const restructured = typed?.inputType === 'insertText' ? typedOverLines : true;
+      // A plain paste (insertPlainText) arrives as insertText but is a paste:
+      // it restructures blocks, and none of the typing-only transforms below
+      // (arrows, linkifying at a space, the typing sentinel) apply to it.
+      const typing = typed?.inputType === 'insertText' && !plainPasting;
+      const restructured = typing ? typedOverLines : true;
       typedOverLines = false;
       if (typed && restructured && !typed.inputType.endsWith('CompositionText')) {
         // Whenever Chromium restructures blocks it copies the computed layout
@@ -5516,21 +5536,21 @@ export class EditorCanvas {
         repairPastedMarkup();
       }
       if (
-        typed?.inputType === 'insertText'
-        && typed.data === '>'
+        typing
+        && typed?.data === '>'
         && !typed.isComposing
       ) {
         convertTypedArrow(body, window.getSelection());
       }
       if (
-        typed?.inputType === 'insertText'
-        && /^[\s\u00a0]+$/.test(typed.data ?? '')
-        && !typed.isComposing
+        typing
+        && /^[\s\u00a0]+$/.test(typed?.data ?? '')
+        && !typed?.isComposing
       ) {
         // The space that ends a URL is the moment it becomes a link.
         linkifyTypedUrl();
       }
-      if (typed?.inputType === 'insertText' && !typed.isComposing) {
+      if (typing && !typed?.isComposing) {
         isolateTypingSentinel(window.getSelection());
       }
       if (el.type === 'text' && (el.autoFit || el.noWrap) && !el.autoSize) scheduleAutoFit(node!);
@@ -5755,7 +5775,10 @@ export class EditorCanvas {
         e.preventDefault();
         this.toggleTextSelectionFormat('strikethrough');
       } else if (
-        (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v'
+        (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey
+        // By character, as the other text chords are, or by physical key
+        // where the layout's letter there is not Latin (Russian, Greek).
+        && (e.key.toLowerCase() === 'v' || (e.code === 'KeyV' && !/^[a-z]$/i.test(e.key)))
       ) {
         if (pastePlainTextChord()) e.preventDefault();
       } else if (this.handleZoomShortcut(e)) {

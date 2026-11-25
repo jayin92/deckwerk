@@ -155,8 +155,13 @@ describe.skipIf(!electronBinary)('Cmd+Shift+V pastes text without its formatting
     const lines = 'First line\nSecond line\n\nAfter a gap';
     const html = `<p style="color: red">${lines.replace(/\n/g, '<br>')}</p>`;
     const results: string[] = [];
-    for (const [id, modifiers] of [['box-a', META_SHIFT], ['box-b', CTRL_SHIFT]] as const) {
-      await setClipboard(html, lines);
+    // box-c: the same lines as a Windows clipboard holds them, ending in CRLF.
+    for (const [id, modifiers, text] of [
+      ['box-a', META_SHIFT, lines],
+      ['box-b', CTRL_SHIFT, lines],
+      ['box-c', META_SHIFT, lines.replace(/\n/g, '\r\n')],
+    ] as const) {
+      await setClipboard(html, text);
       await editAll(id);
       await editor!.chord('V', 'KeyV', 86, modifiers);
       results.push(await closeAndRead(id));
