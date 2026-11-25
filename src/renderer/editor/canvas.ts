@@ -5125,6 +5125,59 @@ export class EditorCanvas {
       this.onTableSelectionChange?.();
     };
 
+    /**
+     * Cmd/Ctrl+Shift+V: the clipboard's text without its formatting, taking
+     * the style of the text around the caret, as Paste and Match Style does.
+     *
+     * Chromium's own binding is Ctrl+Shift+V off macOS and
+     * Cmd+Option+Shift+V on it, and it drops multi-line text in as raw
+     * newlines inside one paragraph. Owning the chord gives one shorter
+     * chord everywhere and real paragraphs, one per line. The text goes
+     * through the paste handler, so a URL over selected text still links it
+     * and tab-separated text still becomes a table.
+     *
+     * Returns false when the text cannot be read (a browser on a plain-HTTP
+     * page has no clipboard API): the key is then left to the browser.
+     */
+    const pastePlainTextChord = (): boolean => {
+      const nativeApi = window.api as Partial<Window['api']>;
+      const read = nativeApi.readClipboardText
+        ?? (navigator.clipboard?.readText ? () => navigator.clipboard.readText() : null);
+      if (!read) {
+        if (USES_META_MODIFIER) {
+          this.notice('Paste without formatting needs an https page here: use Cmd+Option+Shift+V.');
+        }
+        return false;
+      }
+      void read().then(insertPlainText, () => {
+        this.notice('The browser did not allow reading the clipboard.');
+      });
+      return true;
+    };
+    const insertPlainText = (plainText: string) => {
+      if (ended || !plainText) return;
+      if (document.activeElement !== body) body.focus();
+      const selection = window.getSelection();
+      const inBox = selection?.rangeCount
+        && body.contains(selection.getRangeAt(0).commonAncestorContainer);
+      if (!inBox && this.textSelectionRange && selection) {
+        selection.removeAllRanges();
+        selection.addRange(this.textSelectionRange.cloneRange());
+      }
+      const clipboardData = new DataTransfer();
+      clipboardData.setData('text/plain', plainText);
+      const event = new ClipboardEvent('paste', { clipboardData, cancelable: true });
+      onPaste(event);
+      pastedFit = null;
+      if (event.defaultPrevented) return;
+      // Its own undo step, as a native paste is.
+      sealTextChunk();
+      document.execCommand('insertText', false, plainText);
+      repairPastedMarkup();
+      this.textSelectionRange = this.activeTextRange(body)?.cloneRange() ?? null;
+      sealTextChunk();
+    };
+
     let tableDrag: { pointerId: number; row: number; column: number } | null = null;
     let borderPaintDrag: { pointerId: number; changed: boolean } | null = null;
     const tableCellFromEvent = (event: PointerEvent | MouseEvent): HTMLTableCellElement | null => {
@@ -5701,6 +5754,10 @@ export class EditorCanvas {
         // of Cut.
         e.preventDefault();
         this.toggleTextSelectionFormat('strikethrough');
+      } else if (
+        (e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey && e.key.toLowerCase() === 'v'
+      ) {
+        if (pastePlainTextChord()) e.preventDefault();
       } else if (this.handleZoomShortcut(e)) {
         // The unshifted chords zoom the canvas here too: they mean nothing to
         // the text, and would otherwise zoom the whole page.

@@ -308,10 +308,14 @@ export const TARGET_FIXTURES: Record<PasteTarget, { html: string; classes: strin
   },
 };
 
+/** Cmd/Ctrl+V, or Cmd+Shift+V for the clipboard's text without its formatting. */
+export type PasteRoute = 'paste' | 'plain';
+
 export interface PasteCase {
   payload: ClipboardPayload;
   target: PasteTarget;
   operations: PasteOperation[];
+  route: PasteRoute;
 }
 
 /** A small, reproducible pseudo-random source. */
@@ -334,27 +338,43 @@ export function pasteCases(options: {
   sample: number;
   operationsPerCase: number;
   seed?: number;
+  route?: PasteRoute;
 }): PasteCase[] {
-  const { exhaustive, sample, operationsPerCase, seed = 20260831 } = options;
+  const { exhaustive, sample, operationsPerCase, seed = 20260831, route = 'paste' } = options;
   const next = random(seed);
   const sequence = () => Array.from(
     { length: operationsPerCase },
     () => PASTE_OPERATIONS[Math.floor(next() * PASTE_OPERATIONS.length)],
   );
+  // A plain paste carries only the text, so a rendered equation arrives as
+  // its visible characters: there is no source to recover. The route is in
+  // the name, so a failure (and PASTE_FUZZ_ONLY) tells the two apart.
+  const corpus = route === 'plain'
+    ? PASTE_CORPUS.filter((payload) => !payload.math)
+      .map((payload) => ({ ...payload, name: `${payload.name} [plain]` }))
+    : PASTE_CORPUS;
   if (exhaustive) {
-    return PASTE_CORPUS.flatMap((payload) => PASTE_TARGETS.map((target) => ({
-      payload, target, operations: sequence(),
+    return corpus.flatMap((payload) => PASTE_TARGETS.map((target) => ({
+      payload, target, operations: sequence(), route,
     })));
   }
   return Array.from({ length: sample }, (_, index) => ({
-    payload: PASTE_CORPUS[index % PASTE_CORPUS.length],
+    payload: corpus[index % corpus.length],
     target: PASTE_TARGETS[index % PASTE_TARGETS.length],
     operations: sequence(),
+    route,
   }));
 }
 
-/** Put both clipboard flavours on the real clipboard and press Cmd/Ctrl+V. */
-export async function pasteFromClipboard(cdp: Cdp, payload: ClipboardPayload): Promise<void> {
+/**
+ * Put both clipboard flavours on the real clipboard and press Cmd/Ctrl+V, or
+ * Cmd+Shift+V to paste only the text.
+ */
+export async function pasteFromClipboard(
+  cdp: Cdp,
+  payload: ClipboardPayload,
+  route: PasteRoute = 'paste',
+): Promise<void> {
   // On CI's bare Xvfb there is no window manager to keep the page focused.
   // Clipboard API calls are evaluated with a user gesture, but Chromium's
   // native paste command still requires the target page to be foregrounded.
@@ -378,7 +398,8 @@ export async function pasteFromClipboard(cdp: Cdp, payload: ClipboardPayload): P
   // text never appeared" against the case that just wrote. Wait for the
   // clipboard to read back what we put there before pressing paste.
   await clipboardHolds(cdp, payload.text);
-  await cdp.chord('v', 'KeyV', 86, PASTE_MOD, ['paste']);
+  if (route === 'plain') await cdp.chord('V', 'KeyV', 86, 4 | 8);
+  else await cdp.chord('v', 'KeyV', 86, PASTE_MOD, ['paste']);
 }
 
 /**

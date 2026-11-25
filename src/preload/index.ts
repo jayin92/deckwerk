@@ -131,6 +131,8 @@ const api = {
     ipcRenderer.invoke(IPC.clipboardWrite, request),
   readClipboard: (): Promise<ClipboardReadResult | null> =>
     ipcRenderer.invoke(IPC.clipboardRead),
+  /** The clipboard's plain text, for pasting without formatting. */
+  readClipboardText: (): Promise<string> => ipcRenderer.invoke(IPC.clipboardReadText),
 
   importAssets: (paths: string[], progressToken?: string): Promise<ImportedAsset[]> =>
     ipcRenderer.invoke(IPC.assetImport, paths, progressToken),
